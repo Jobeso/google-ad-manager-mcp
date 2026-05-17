@@ -506,6 +506,159 @@ def update_creative(
     }
 
 
+def upload_html5_creative(
+    file_path: str,
+    advertiser_id: int,
+    width: int,
+    height: int,
+    creative_name: Optional[str] = None,
+    is_safe_frame_compatible: bool = True,
+    network_code: Optional[str] = None
+) -> dict:
+    """Upload an HTML5 creative (ZIP bundle) to Ad Manager.
+
+    Creates a GAM Html5Creative from a self-contained ZIP of HTML/JS/CSS assets.
+    Suitable for in-app or web HTML5 placements; if the bundle is MRAID-compliant
+    it can serve in environments that expect MRAID (e.g. via the Google Mobile
+    Ads SDK) — that depends on the bundle contents, not on any flag set here.
+
+    The click-through URL is NOT set on the creative — it must be embedded in
+    the bundle itself via the clickTAG macro (e.g. ``var clickTag = "https://...";``
+    in the bundle's HTML). GAM substitutes this at serve time. Unlike
+    ImageCreative, Html5Creative has no ``destinationUrl`` field in the GAM API.
+
+    Args:
+        file_path: Path to the HTML5 ZIP bundle
+        advertiser_id: ID of the advertiser
+        width: Creative width in pixels
+        height: Creative height in pixels
+        creative_name: Optional name for the creative (defaults to auto-generated)
+        is_safe_frame_compatible: Whether the creative works in SafeFrame (default: True)
+        network_code: Optional GAM network code. Uses default if not provided.
+
+    Returns:
+        dict with created creative details
+    """
+    client = get_gam_client(network_code=network_code)
+    creative_service = client.get_service('CreativeService')
+
+    path = Path(file_path)
+    filename = path.name
+
+    if not path.exists():
+        return {"error": f"File not found: {file_path}"}
+
+    if path.suffix.lower() != '.zip':
+        return {"error": f"HTML5 creative must be a .zip bundle, got: {filename}"}
+
+    with open(path, 'rb') as f:
+        bundle_data = f.read()
+
+    bundle_data_base64 = base64.b64encode(bundle_data).decode('utf-8')
+
+    if creative_name is None:
+        creative_name = f"HTML5 Creative - {width}x{height} - {path.stem}"
+
+    creative = {
+        'xsi_type': 'Html5Creative',
+        'name': creative_name,
+        'advertiserId': advertiser_id,
+        'size': {
+            'width': width,
+            'height': height,
+            'isAspectRatio': False
+        },
+        'html5Asset': {
+            'assetByteArray': bundle_data_base64,
+            'fileName': filename
+        },
+        'isSafeFrameCompatible': is_safe_frame_compatible
+    }
+
+    created_creatives = creative_service.createCreatives([creative])
+
+    if not created_creatives:
+        return {"error": "Failed to create HTML5 creative"}
+
+    created = created_creatives[0]
+
+    return {
+        "id": safe_get(created, 'id'),
+        "name": safe_get(created, 'name'),
+        "advertiser_id": advertiser_id,
+        "size": f"{width}x{height}",
+        "type": "Html5Creative",
+        "is_safe_frame_compatible": is_safe_frame_compatible,
+        "message": f"HTML5 creative '{creative_name}' uploaded successfully"
+    }
+
+
+def upload_and_associate_html5_creative(
+    file_path: str,
+    advertiser_id: int,
+    line_item_id: int,
+    width: int,
+    height: int,
+    creative_name: Optional[str] = None,
+    is_safe_frame_compatible: bool = True,
+    network_code: Optional[str] = None
+) -> dict:
+    """Upload an HTML5 creative and associate it with a line item in one operation.
+
+    The click-through URL is NOT a parameter here — for HTML5 bundles it must
+    be embedded in the ZIP via the clickTAG macro (see upload_html5_creative).
+
+    Args:
+        file_path: Path to the HTML5 ZIP bundle
+        advertiser_id: ID of the advertiser
+        line_item_id: ID of the line item
+        width: Creative width in pixels
+        height: Creative height in pixels
+        creative_name: Optional name for the creative
+        is_safe_frame_compatible: Whether the creative works in SafeFrame (default: True)
+        network_code: Optional GAM network code. Uses default if not provided.
+
+    Returns:
+        dict with both upload and association results
+    """
+    upload_result = upload_html5_creative(
+        file_path=file_path,
+        advertiser_id=advertiser_id,
+        width=width,
+        height=height,
+        creative_name=creative_name,
+        is_safe_frame_compatible=is_safe_frame_compatible,
+        network_code=network_code
+    )
+
+    if "error" in upload_result:
+        return upload_result
+
+    creative_id = upload_result["id"]
+
+    assoc_result = associate_creative_with_line_item(
+        creative_id=creative_id,
+        line_item_id=line_item_id,
+        network_code=network_code
+    )
+
+    if "error" in assoc_result:
+        return {
+            "creative": upload_result,
+            "association_error": assoc_result["error"]
+        }
+
+    return {
+        "creative_id": creative_id,
+        "creative_name": upload_result["name"],
+        "advertiser_id": advertiser_id,
+        "size": upload_result["size"],
+        "type": "Html5Creative",
+        "line_item_id": line_item_id,
+        "message": f"HTML5 creative uploaded and associated with line item {line_item_id}"
+    }
+
+
 def create_third_party_creative(
     advertiser_id: int,
     name: str,

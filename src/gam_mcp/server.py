@@ -729,6 +729,109 @@ def get_creative_preview_url(
 
 
 @mcp.tool()
+def upload_html5_creative(
+    file_path: str,
+    advertiser_id: int,
+    width: int,
+    height: int,
+    creative_name: Optional[str] = None,
+    is_safe_frame_compatible: bool = True,
+    network_code: Optional[str] = None
+) -> str:
+    """Upload an HTML5 creative (ZIP bundle) to Ad Manager.
+
+    Use this when the creative is a self-contained ZIP of HTML/JS/CSS assets.
+    For static images use upload_creative; for third-party HTML/JS ad tags
+    (e.g. DCM/Campaign Manager snippets) use create_third_party_creative.
+    If the ZIP is MRAID-compliant it can serve in environments that expect
+    MRAID (e.g. via the Google Mobile Ads SDK) — that depends on the bundle
+    contents, not on any flag set here.
+
+    There is NO click-through URL parameter: the GAM Html5Creative type has
+    no destinationUrl field. The click destination must be embedded inside
+    the bundle via the clickTAG macro (e.g. `var clickTag = "https://...";`
+    in the bundle's HTML); GAM substitutes it at serve time. If the caller
+    only has a URL and no bundle, they need to author/edit the ZIP first.
+
+    Args:
+        file_path: Path to the HTML5 ZIP bundle (must be a .zip file)
+        advertiser_id: ID of the advertiser
+        width: Creative width in pixels
+        height: Creative height in pixels
+        creative_name: Optional name for the creative (auto-generated if omitted)
+        is_safe_frame_compatible: Whether the creative works in SafeFrame (default: True).
+            Set False for bundles that need top-window access (e.g. some MRAID creatives).
+        network_code: Optional GAM network code to target a specific network.
+            If not provided, uses the default network.
+
+    Returns the created creative details. On failure returns {"error": "..."}
+    (missing file, non-.zip extension, or GAM rejected the create call).
+    """
+    init_client()
+    result = creatives.upload_html5_creative(
+        file_path=file_path,
+        advertiser_id=advertiser_id,
+        width=width,
+        height=height,
+        creative_name=creative_name,
+        is_safe_frame_compatible=is_safe_frame_compatible,
+        network_code=network_code
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def upload_and_associate_html5_creative(
+    file_path: str,
+    advertiser_id: int,
+    line_item_id: int,
+    width: int,
+    height: int,
+    creative_name: Optional[str] = None,
+    is_safe_frame_compatible: bool = True,
+    network_code: Optional[str] = None
+) -> str:
+    """Upload an HTML5 creative (ZIP bundle) and associate it with a line item in one step.
+
+    Use this when you have both the bundle and the target line item ready —
+    saves a separate associate_creative_with_line_item call. For static images
+    use upload_and_associate_creative.
+
+    No click-through URL parameter: for HTML5 the destination must live inside
+    the ZIP via the clickTAG macro (see upload_html5_creative).
+
+    Args:
+        file_path: Path to the HTML5 ZIP bundle (must be a .zip file)
+        advertiser_id: ID of the advertiser
+        line_item_id: ID of the line item
+        width: Creative width in pixels
+        height: Creative height in pixels
+        creative_name: Optional name for the creative (auto-generated if omitted)
+        is_safe_frame_compatible: Whether the creative works in SafeFrame (default: True)
+        network_code: Optional GAM network code to target a specific network.
+            If not provided, uses the default network.
+
+    Returns the creative and association details. If upload fails returns
+    {"error": "..."}; if upload succeeds but association fails returns
+    {"creative": {...}, "association_error": "..."} — in that case the
+    creative was uploaded and remains in GAM; retry with
+    associate_creative_with_line_item to attach it.
+    """
+    init_client()
+    result = creatives.upload_and_associate_html5_creative(
+        file_path=file_path,
+        advertiser_id=advertiser_id,
+        line_item_id=line_item_id,
+        width=width,
+        height=height,
+        creative_name=creative_name,
+        is_safe_frame_compatible=is_safe_frame_compatible,
+        network_code=network_code
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 def create_third_party_creative(
     advertiser_id: int,
     name: str,
