@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] - 2026-05-28
+
+### Added
+
+- **Yield-partner / OpenBidding dimensions and metrics for `run_custom_report`**:
+  - New dimensions: `YIELD_PARTNER`, `YIELD_PARTNER_TAG`, `YIELD_GROUP_NAME`,
+    `YIELD_GROUP_ID`, `DEMAND_CHANNEL_NAME`, `DEMAND_CHANNEL_ID`,
+    `BUYER_NETWORK_NAME`, `BIDDER_NAME`, `EXCHANGE_BIDDING_DEAL_TYPE`,
+    `PROGRAMMATIC_BUYER_NAME`
+  - New geo/device/app dimensions: `COUNTRY_NAME`, `COUNTRY_CRITERIA_ID`,
+    `DEVICE_CATEGORY_NAME`, `OPERATING_SYSTEM_VERSION_NAME`, `BROWSER_NAME`,
+    `MOBILE_APP_NAME`, `REQUESTED_AD_SIZES`
+  - New metrics: `AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS`,
+    `AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS`, `AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE`,
+    `YIELD_GROUP_ESTIMATED_CPM`, `YIELD_GROUP_IMPRESSIONS`,
+    `YIELD_GROUP_CALLOUTS`, `YIELD_GROUP_SUCCESSFUL_RESPONSES`,
+    `TOTAL_LINE_ITEM_LEVEL_WITH_CPD_AVERAGE_ECPM`
+  - Enables attributing AdX / OpenBidding revenue to specific yield partners and
+    buyers via `run_custom_report`. Values are passed through to the GAM
+    ReportService as-is.
+
 ## [0.1.13] - 2026-03-10
 
 ### Added
