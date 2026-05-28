@@ -10,11 +10,14 @@ from ..utils import safe_get
 
 logger = logging.getLogger(__name__)
 
-# Common report dimensions
+# Common report dimensions, grouped by purpose. Values are passed through to the
+# GAM ReportService as-is, so additions here are documentation/exposure only.
 DIMENSIONS = {
+    # Time
     "DATE": "DATE",
     "WEEK": "WEEK",
     "MONTH_AND_YEAR": "MONTH_AND_YEAR",
+    # Order / line item / creative
     "ORDER_ID": "ORDER_ID",
     "ORDER_NAME": "ORDER_NAME",
     "LINE_ITEM_ID": "LINE_ITEM_ID",
@@ -27,19 +30,50 @@ DIMENSIONS = {
     "ADVERTISER_NAME": "ADVERTISER_NAME",
     "AD_UNIT_ID": "AD_UNIT_ID",
     "AD_UNIT_NAME": "AD_UNIT_NAME",
+    # Programmatic / yield-partner attribution (OpenBidding, Ad Exchange)
+    "YIELD_PARTNER": "YIELD_PARTNER",
+    "YIELD_PARTNER_TAG": "YIELD_PARTNER_TAG",
+    "YIELD_GROUP_NAME": "YIELD_GROUP_NAME",
+    "YIELD_GROUP_ID": "YIELD_GROUP_ID",
+    "DEMAND_CHANNEL_NAME": "DEMAND_CHANNEL_NAME",
+    "DEMAND_CHANNEL_ID": "DEMAND_CHANNEL_ID",
+    "BUYER_NETWORK_NAME": "BUYER_NETWORK_NAME",
+    "BIDDER_NAME": "BIDDER_NAME",
+    "EXCHANGE_BIDDING_DEAL_TYPE": "EXCHANGE_BIDDING_DEAL_TYPE",
+    "PROGRAMMATIC_BUYER_NAME": "PROGRAMMATIC_BUYER_NAME",
+    # Geo / device / app
+    "COUNTRY_NAME": "COUNTRY_NAME",
+    "COUNTRY_CRITERIA_ID": "COUNTRY_CRITERIA_ID",
+    "DEVICE_CATEGORY_NAME": "DEVICE_CATEGORY_NAME",
+    "OPERATING_SYSTEM_VERSION_NAME": "OPERATING_SYSTEM_VERSION_NAME",
+    "BROWSER_NAME": "BROWSER_NAME",
+    "MOBILE_APP_NAME": "MOBILE_APP_NAME",
+    "REQUESTED_AD_SIZES": "REQUESTED_AD_SIZES",
 }
 
-# Common report metrics (columns)
+# Common report metrics (columns). Values are pass-through to GAM ReportService.
 METRICS = {
+    # Line-item-level totals
     "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS": "TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS",
     "TOTAL_LINE_ITEM_LEVEL_CLICKS": "TOTAL_LINE_ITEM_LEVEL_CLICKS",
     "TOTAL_LINE_ITEM_LEVEL_CTR": "TOTAL_LINE_ITEM_LEVEL_CTR",
     "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE": "TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE",
     "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE": "TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE",
+    "TOTAL_LINE_ITEM_LEVEL_WITH_CPD_AVERAGE_ECPM": "TOTAL_LINE_ITEM_LEVEL_WITH_CPD_AVERAGE_ECPM",
+    # Inventory-level totals
     "TOTAL_INVENTORY_LEVEL_IMPRESSIONS": "TOTAL_INVENTORY_LEVEL_IMPRESSIONS",
     "TOTAL_AD_REQUESTS": "TOTAL_AD_REQUESTS",
     "TOTAL_RESPONSES_SERVED": "TOTAL_RESPONSES_SERVED",
     "TOTAL_FILL_RATE": "TOTAL_FILL_RATE",
+    # Ad Exchange / OpenBidding revenue and auction
+    "AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS": "AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS",
+    "AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS": "AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS",
+    "AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE": "AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE",
+    # Yield-group / OpenBidding auction
+    "YIELD_GROUP_ESTIMATED_CPM": "YIELD_GROUP_ESTIMATED_CPM",
+    "YIELD_GROUP_IMPRESSIONS": "YIELD_GROUP_IMPRESSIONS",
+    "YIELD_GROUP_CALLOUTS": "YIELD_GROUP_CALLOUTS",
+    "YIELD_GROUP_SUCCESSFUL_RESPONSES": "YIELD_GROUP_SUCCESSFUL_RESPONSES",
 }
 
 # Date range types
@@ -213,15 +247,31 @@ def run_custom_report(
     """Run a custom report with specified dimensions and metrics.
 
     Args:
-        dimensions: List of dimension names (e.g., ["DATE", "ORDER_NAME", "LINE_ITEM_NAME"])
-            Valid dimensions: DATE, WEEK, MONTH_AND_YEAR, ORDER_ID, ORDER_NAME,
-            LINE_ITEM_ID, LINE_ITEM_NAME, LINE_ITEM_TYPE, CREATIVE_ID, CREATIVE_NAME,
-            CREATIVE_SIZE, ADVERTISER_ID, ADVERTISER_NAME, AD_UNIT_ID, AD_UNIT_NAME
-        columns: List of metric/column names (e.g., ["TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS"])
-            Valid metrics: TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS, TOTAL_LINE_ITEM_LEVEL_CLICKS,
-            TOTAL_LINE_ITEM_LEVEL_CTR, TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE,
-            TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE, TOTAL_INVENTORY_LEVEL_IMPRESSIONS,
-            TOTAL_AD_REQUESTS, TOTAL_RESPONSES_SERVED, TOTAL_FILL_RATE
+        dimensions: List of dimension names (e.g., ["DATE", "ORDER_NAME", "LINE_ITEM_NAME"]).
+            Common dimensions, grouped:
+              Time: DATE, WEEK, MONTH_AND_YEAR
+              Order / line item / creative: ORDER_ID, ORDER_NAME, LINE_ITEM_ID, LINE_ITEM_NAME,
+                LINE_ITEM_TYPE, CREATIVE_ID, CREATIVE_NAME, CREATIVE_SIZE, ADVERTISER_ID,
+                ADVERTISER_NAME, AD_UNIT_ID, AD_UNIT_NAME
+              Programmatic / yield-partner (OpenBidding, Ad Exchange): YIELD_PARTNER,
+                YIELD_PARTNER_TAG, YIELD_GROUP_NAME, YIELD_GROUP_ID, DEMAND_CHANNEL_NAME,
+                DEMAND_CHANNEL_ID, BUYER_NETWORK_NAME, BIDDER_NAME,
+                EXCHANGE_BIDDING_DEAL_TYPE, PROGRAMMATIC_BUYER_NAME
+              Geo / device / app: COUNTRY_NAME, COUNTRY_CRITERIA_ID, DEVICE_CATEGORY_NAME,
+                OPERATING_SYSTEM_VERSION_NAME, BROWSER_NAME, MOBILE_APP_NAME, REQUESTED_AD_SIZES
+            Any other dimension accepted by the GAM ReportService API may also be passed.
+        columns: List of metric/column names (e.g., ["TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS"]).
+            Common metrics, grouped:
+              Line-item-level totals: TOTAL_LINE_ITEM_LEVEL_IMPRESSIONS,
+                TOTAL_LINE_ITEM_LEVEL_CLICKS, TOTAL_LINE_ITEM_LEVEL_CTR,
+                TOTAL_LINE_ITEM_LEVEL_CPM_AND_CPC_REVENUE, TOTAL_LINE_ITEM_LEVEL_ALL_REVENUE,
+                TOTAL_LINE_ITEM_LEVEL_WITH_CPD_AVERAGE_ECPM
+              Inventory-level totals: TOTAL_INVENTORY_LEVEL_IMPRESSIONS, TOTAL_AD_REQUESTS,
+                TOTAL_RESPONSES_SERVED, TOTAL_FILL_RATE
+              Ad Exchange / OpenBidding revenue: AD_EXCHANGE_LINE_ITEM_LEVEL_IMPRESSIONS,
+                AD_EXCHANGE_LINE_ITEM_LEVEL_CLICKS, AD_EXCHANGE_LINE_ITEM_LEVEL_REVENUE
+              Yield-group / OpenBidding auction: YIELD_GROUP_ESTIMATED_CPM,
+                YIELD_GROUP_IMPRESSIONS, YIELD_GROUP_CALLOUTS, YIELD_GROUP_SUCCESSFUL_RESPONSES
         date_range_type: Date range type (TODAY, YESTERDAY, LAST_WEEK, LAST_MONTH,
             LAST_3_MONTHS, REACH_LIFETIME, CUSTOM_DATE)
         start_year: Start year for CUSTOM_DATE range
