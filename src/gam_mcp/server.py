@@ -10,21 +10,21 @@ Reference: https://modelcontextprotocol.io/specification/draft/basic/security_be
 Reference: https://gofastmcp.com/python-sdk/fastmcp-server-auth-auth
 """
 
-import os
+import hmac
 import json
 import logging
+import os
 import secrets
-import hmac
 from typing import Optional
 
 # Use the standalone fastmcp package (has full middleware support)
-from fastmcp import FastMCP, Context
-from fastmcp.server.middleware import Middleware
-from fastmcp.server.dependencies import get_http_headers
+from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import get_http_headers
+from fastmcp.server.middleware import Middleware
 
-from .client import init_gam_client, get_gam_client, is_gam_client_initialized
-from .tools import orders, line_items, creatives, advertisers, verification, reporting
+from .client import init_gam_client, is_gam_client_initialized
+from .tools import advertisers, creatives, line_items, orders, reporting, verification
 
 # Authentication token - set via environment variable or generate random
 AUTH_TOKEN = os.environ.get("GAM_MCP_AUTH_TOKEN", None)
@@ -671,6 +671,202 @@ def update_creative(
 
 
 @mcp.tool()
+def perform_creative_action(
+    action: str,
+    creative_id: Optional[int] = None,
+    statement_query: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> str:
+    """Activate or deactivate creatives.
+
+    Args:
+        action: ActivateCreatives or DeactivateCreatives.
+        creative_id: Optional single creative ID.
+        statement_query: Optional full PQL statement query for bulk actions.
+        network_code: Optional GAM network code to target a specific network.
+
+    Returns number of changed creatives.
+    """
+    init_client()
+    result = creatives.perform_creative_action(
+        action=action,
+        creative_id=creative_id,
+        statement_query=statement_query,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def list_creative_templates(
+    limit: int = 50,
+    name_contains: Optional[str] = None,
+    status: Optional[str] = "ACTIVE",
+    template_type: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> str:
+    """List GAM creative templates.
+
+    Args:
+        limit: Maximum templates to return.
+        name_contains: Optional substring filter for template names.
+        status: Optional template status filter, e.g. ACTIVE.
+        template_type: Optional template type filter.
+        network_code: Optional GAM network code to target a specific network.
+
+    Returns creative template metadata and variables.
+    """
+    init_client()
+    result = creatives.list_creative_templates(
+        limit=limit,
+        name_contains=name_contains,
+        status=status,
+        template_type=template_type,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def get_creative_template(
+    creative_template_id: int,
+    network_code: Optional[str] = None
+) -> str:
+    """Get a GAM creative template by ID."""
+    init_client()
+    result = creatives.get_creative_template(
+        creative_template_id=creative_template_id,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def create_template_creative(
+    advertiser_id: int,
+    name: str,
+    creative_template_id: int,
+    width: int,
+    height: int,
+    variable_values: str,
+    destination_url: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> str:
+    """Create a TemplateCreative from a creative template.
+
+    Args:
+        advertiser_id: ID of the advertiser.
+        name: Name for the creative.
+        creative_template_id: GAM creative template ID.
+        width: Creative width in pixels.
+        height: Creative height in pixels.
+        variable_values: JSON object mapping template variable uniqueName to value,
+            or JSON array of GAM-ready creative template variable value objects.
+        destination_url: Optional click-through URL.
+        network_code: Optional GAM network code to target a specific network.
+
+    Returns the created template creative details.
+    """
+    init_client()
+    try:
+        parsed_values = json.loads(variable_values)
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid variable_values JSON: {e}"}, indent=2)
+
+    try:
+        result = creatives.create_template_creative(
+            advertiser_id=advertiser_id,
+            name=name,
+            creative_template_id=creative_template_id,
+            width=width,
+            height=height,
+            variable_values=parsed_values,
+            destination_url=destination_url,
+            network_code=network_code,
+        )
+    except ValueError as e:
+        result = {"error": str(e)}
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def list_creative_wrappers(
+    limit: int = 50,
+    label_id: Optional[int] = None,
+    status: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> str:
+    """List creative wrappers, optionally filtered by label ID or status."""
+    init_client()
+    result = creatives.list_creative_wrappers(
+        limit=limit,
+        label_id=label_id,
+        status=status,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def create_html_creative_wrapper(
+    label_id: int,
+    html_header: Optional[str] = None,
+    html_footer: Optional[str] = None,
+    ordering: str = "NO_PREFERENCE",
+    amp_head: Optional[str] = None,
+    amp_body: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> str:
+    """Create an HTML creative wrapper for a CREATIVE_WRAPPER label.
+
+    Args:
+        label_id: CREATIVE_WRAPPER label ID.
+        html_header: Optional HTML prepended before the creative.
+        html_footer: Optional HTML appended after the creative.
+        ordering: Wrapper ordering, e.g. NO_PREFERENCE, INNER, OUTER.
+        amp_head: Optional AMP head wrapper markup.
+        amp_body: Optional AMP body wrapper markup.
+        network_code: Optional GAM network code to target a specific network.
+    """
+    init_client()
+    result = creatives.create_html_creative_wrapper(
+        label_id=label_id,
+        html_header=html_header,
+        html_footer=html_footer,
+        ordering=ordering,
+        amp_head=amp_head,
+        amp_body=amp_body,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def perform_creative_wrapper_action(
+    action: str,
+    creative_wrapper_id: Optional[int] = None,
+    statement_query: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> str:
+    """Activate or deactivate creative wrappers.
+
+    Args:
+        action: ActivateCreativeWrappers or DeactivateCreativeWrappers.
+        creative_wrapper_id: Optional single creative wrapper ID.
+        statement_query: Optional full PQL statement query for bulk actions.
+        network_code: Optional GAM network code to target a specific network.
+    """
+    init_client()
+    result = creatives.perform_creative_wrapper_action(
+        action=action,
+        creative_wrapper_id=creative_wrapper_id,
+        statement_query=statement_query,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 def list_creatives_by_line_item(
     line_item_id: int,
     limit: int = 100,
@@ -1048,6 +1244,7 @@ def run_delivery_report(
     order_id: Optional[int] = None,
     line_item_id: Optional[int] = None,
     include_date_breakdown: bool = True,
+    export_format: str = "CSV_DUMP",
     timeout_seconds: int = 120,
     network_code: Optional[str] = None
 ) -> str:
@@ -1068,6 +1265,7 @@ def run_delivery_report(
         order_id: Optional order ID to filter by
         line_item_id: Optional line item ID to filter by
         include_date_breakdown: If True, includes daily breakdown (default: True)
+        export_format: Report export format, e.g. CSV_DUMP, TSV, XML, XLSX
         timeout_seconds: Maximum time to wait for report (default: 120)
         network_code: Optional GAM network code to target a specific network.
             If not provided, uses the default network.
@@ -1086,6 +1284,7 @@ def run_delivery_report(
         order_id=order_id,
         line_item_id=line_item_id,
         include_date_breakdown=include_date_breakdown,
+        export_format=export_format,
         timeout_seconds=timeout_seconds,
         network_code=network_code
     )
@@ -1103,6 +1302,7 @@ def run_inventory_report(
     end_day: Optional[int] = None,
     ad_unit_id: Optional[str] = None,
     include_date_breakdown: bool = True,
+    export_format: str = "CSV_DUMP",
     timeout_seconds: int = 120,
     network_code: Optional[str] = None
 ) -> str:
@@ -1120,6 +1320,7 @@ def run_inventory_report(
         end_day: End date day 1-31 (for CUSTOM_DATE)
         ad_unit_id: Optional ad unit ID to filter by
         include_date_breakdown: If True, includes daily breakdown (default: True)
+        export_format: Report export format, e.g. CSV_DUMP, TSV, XML, XLSX
         timeout_seconds: Maximum time to wait for report (default: 120)
         network_code: Optional GAM network code to target a specific network.
             If not provided, uses the default network.
@@ -1137,6 +1338,7 @@ def run_inventory_report(
         end_day=end_day,
         ad_unit_id=ad_unit_id,
         include_date_breakdown=include_date_breakdown,
+        export_format=export_format,
         timeout_seconds=timeout_seconds,
         network_code=network_code
     )
@@ -1155,6 +1357,7 @@ def run_custom_report(
     end_month: Optional[int] = None,
     end_day: Optional[int] = None,
     filter_statement: Optional[str] = None,
+    export_format: str = "CSV_DUMP",
     timeout_seconds: int = 120,
     network_code: Optional[str] = None
 ) -> str:
@@ -1195,6 +1398,7 @@ def run_custom_report(
         end_month: End month (1-12) for CUSTOM_DATE range
         end_day: End day (1-31) for CUSTOM_DATE range
         filter_statement: Optional filter (e.g., "ORDER_ID = 12345")
+        export_format: Report export format, e.g. CSV_DUMP, TSV, XML, XLSX
         timeout_seconds: Maximum seconds to wait for report completion
         network_code: Optional GAM network code to target a specific network.
             If not provided, uses the default network.
@@ -1225,8 +1429,181 @@ def run_custom_report(
         end_month=end_month,
         end_day=end_day,
         filter_statement=filter_statement,
+        export_format=export_format,
         timeout_seconds=timeout_seconds,
         network_code=network_code
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def start_custom_report(
+    dimensions: str,
+    columns: str,
+    date_range_type: str = "LAST_WEEK",
+    start_year: Optional[int] = None,
+    start_month: Optional[int] = None,
+    start_day: Optional[int] = None,
+    end_year: Optional[int] = None,
+    end_month: Optional[int] = None,
+    end_day: Optional[int] = None,
+    filter_statement: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> str:
+    """Start a custom report job and return the job ID without waiting.
+
+    Args:
+        dimensions: JSON array of dimension names.
+        columns: JSON array of metric/column names.
+        date_range_type: Date range (TODAY, YESTERDAY, LAST_WEEK, LAST_MONTH,
+            LAST_3_MONTHS, REACH_LIFETIME, CUSTOM_DATE)
+        start_year: Start year for CUSTOM_DATE range
+        start_month: Start month (1-12) for CUSTOM_DATE range
+        start_day: Start day (1-31) for CUSTOM_DATE range
+        end_year: End year for CUSTOM_DATE range
+        end_month: End month (1-12) for CUSTOM_DATE range
+        end_day: End day (1-31) for CUSTOM_DATE range
+        filter_statement: Optional filter without WHERE, e.g. "ORDER_ID = 12345"
+        network_code: Optional GAM network code to target a specific network.
+
+    Returns the report job ID and initial status.
+    """
+    init_client()
+    try:
+        parsed_dimensions = json.loads(dimensions)
+        parsed_columns = json.loads(columns)
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid report JSON: {e}"}, indent=2)
+
+    result = reporting.start_custom_report(
+        dimensions=parsed_dimensions,
+        columns=parsed_columns,
+        date_range_type=date_range_type,
+        start_year=start_year,
+        start_month=start_month,
+        start_day=start_day,
+        end_year=end_year,
+        end_month=end_month,
+        end_day=end_day,
+        filter_statement=filter_statement,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def get_report_job_status(
+    report_job_id: int,
+    network_code: Optional[str] = None
+) -> str:
+    """Get the status of a report job by ID."""
+    init_client()
+    result = reporting.get_report_job_status(
+        report_job_id=report_job_id,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def get_report_download_url(
+    report_job_id: int,
+    export_format: str = "CSV_DUMP",
+    use_gzip_compression: bool = True,
+    network_code: Optional[str] = None
+) -> str:
+    """Get a download URL for a completed report job.
+
+    Args:
+        report_job_id: Report job ID from start_custom_report or run_*_report.
+        export_format: Report export format, e.g. CSV_DUMP, TSV, XML, XLSX.
+        use_gzip_compression: Whether GAM should gzip-compress the download.
+        network_code: Optional GAM network code to target a specific network.
+
+    Returns the temporary report download URL.
+    """
+    init_client()
+    result = reporting.get_report_download_url(
+        report_job_id=report_job_id,
+        export_format=export_format,
+        use_gzip_compression=use_gzip_compression,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def list_saved_queries(
+    limit: int = 50,
+    name_contains: Optional[str] = None,
+    include_incompatible: bool = False,
+    network_code: Optional[str] = None
+) -> str:
+    """List saved report queries from GAM.
+
+    Args:
+        limit: Maximum saved queries to return.
+        name_contains: Optional substring filter for saved query names.
+        include_incompatible: Include saved queries incompatible with this API version.
+        network_code: Optional GAM network code to target a specific network.
+
+    Returns saved query IDs, names, compatibility, and report query definitions.
+    """
+    init_client()
+    result = reporting.list_saved_queries(
+        limit=limit,
+        name_contains=name_contains,
+        include_incompatible=include_incompatible,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def get_saved_query(
+    saved_query_id: int,
+    network_code: Optional[str] = None
+) -> str:
+    """Get a saved report query definition by ID."""
+    init_client()
+    result = reporting.get_saved_query(
+        saved_query_id=saved_query_id,
+        network_code=network_code,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def run_saved_query_report(
+    saved_query_id: int,
+    export_format: str = "CSV_DUMP",
+    timeout_seconds: int = 120,
+    date_range_type: Optional[str] = None,
+    start_year: Optional[int] = None,
+    start_month: Optional[int] = None,
+    start_day: Optional[int] = None,
+    end_year: Optional[int] = None,
+    end_month: Optional[int] = None,
+    end_day: Optional[int] = None,
+    network_code: Optional[str] = None
+) -> str:
+    """Run a GAM saved query report by saved query ID.
+
+    Optional date parameters override the saved query's date range.
+    """
+    init_client()
+    result = reporting.run_saved_query_report(
+        saved_query_id=saved_query_id,
+        export_format=export_format,
+        timeout_seconds=timeout_seconds,
+        date_range_type=date_range_type,
+        start_year=start_year,
+        start_month=start_month,
+        start_day=start_day,
+        end_year=end_year,
+        end_month=end_month,
+        end_day=end_day,
+        network_code=network_code,
     )
     return json.dumps(result, indent=2)
 

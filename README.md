@@ -29,9 +29,10 @@ No more clicking. Just tell Claude what you need.
 
 - **Order Management**: List, create, and manage orders
 - **Line Item Management**: Create, duplicate, and configure line items
-- **Creative Management**: Upload images, associate with line items, bulk upload
+- **Creative Management**: Upload images, HTML5 bundles, third-party/template creatives, wrappers, and creative associations
 - **Advertiser Management**: Find, create, and list advertisers
 - **Verification Tools**: Verify line item setup, check delivery status
+- **Reporting Tools**: Run custom reports, saved queries, async report jobs, and export downloads
 - **Campaign Workflow**: Complete campaign creation in one operation
 
 ## Installation
@@ -387,8 +388,17 @@ npx @modelcontextprotocol/inspector http://localhost:8000/mcp
 | `get_creative` | Get creative details |
 | `list_creatives_by_advertiser` | List creatives for an advertiser |
 | `update_creative` | Update creative destination URL or name |
+| `perform_creative_action` | Activate or deactivate creatives |
 | `list_creatives_by_line_item` | List creatives associated with a line item |
+| `upload_html5_creative` | Upload an HTML5 ZIP bundle |
+| `upload_and_associate_html5_creative` | Upload and associate an HTML5 ZIP bundle |
 | `create_third_party_creative` | Create HTML/JavaScript ad tag (DCM, custom HTML) |
+| `list_creative_templates` | List creative templates and template variables |
+| `get_creative_template` | Get a creative template by ID |
+| `create_template_creative` | Create a creative from a GAM creative template |
+| `list_creative_wrappers` | List creative wrappers |
+| `create_html_creative_wrapper` | Create an HTML creative wrapper for a wrapper label |
+| `perform_creative_wrapper_action` | Activate or deactivate creative wrappers |
 | `get_creative_preview_url` | Generate preview URL to see creative on your site |
 
 ### Advertiser Tools
@@ -416,6 +426,12 @@ npx @modelcontextprotocol/inspector http://localhost:8000/mcp
 | `run_delivery_report` | Generate delivery report (impressions, clicks, CTR, revenue) |
 | `run_inventory_report` | Generate inventory report (ad requests, fill rate) |
 | `run_custom_report` | Generate custom report with specified dimensions and metrics |
+| `start_custom_report` | Start an async custom report job |
+| `get_report_job_status` | Check report job status |
+| `get_report_download_url` | Get a download URL for a completed report job |
+| `list_saved_queries` | List saved report queries |
+| `get_saved_query` | Get a saved report query definition |
+| `run_saved_query_report` | Run and download a saved query report |
 
 ### Workflow Tools
 
@@ -500,14 +516,16 @@ The following features are planned for future releases:
 - [ ] **Advanced Targeting** - Geographic, device, daypart, and custom key-value targeting
 - [x] **Reporting Tools** - Generate and retrieve performance reports
 - [ ] **Bulk Operations** - Batch updates for line items, creatives, and targeting
-- [ ] **HTML5/Video Creatives** - Support for rich media and video creative uploads
+- [x] **HTML5 Creatives** - Support for HTML5 ZIP bundle uploads
+- [ ] **Video Creatives** - Support for video creative uploads
 
 ### Long-term
 
 - [ ] **Audience Management** - Create and manage audience segments
 - [ ] **User & Permissions** - Manage users, roles, and order assignments
 - [ ] **Yield Management** - Configure yield groups and optimization
-- [ ] **Custom Reporting** - Scheduled reports with export capabilities
+- [x] **Custom Reporting Exports** - Saved query reports, async jobs, and download URLs
+- [ ] **Scheduled Reporting** - Scheduled report delivery and automation
 
 ### Community Requests
 
