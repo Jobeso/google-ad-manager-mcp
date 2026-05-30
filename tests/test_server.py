@@ -1,8 +1,9 @@
 """Tests for MCP server and middleware."""
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 import hmac
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from gam_mcp.server import BearerAuthMiddleware
 
@@ -174,6 +175,7 @@ class TestServerInitialization:
                 network_code='11111111',
                 application_name='GAM MCP Server',
                 allowed_network_codes={'22222222'},
+                api_version=None,
             )
 
     @patch("gam_mcp.server.is_gam_client_initialized", return_value=False)
@@ -193,6 +195,7 @@ class TestServerInitialization:
                 network_code='12345678',
                 application_name='GAM MCP Server',
                 allowed_network_codes=set(),
+                api_version=None,
             )
 
     @patch("gam_mcp.server.is_gam_client_initialized", return_value=True)

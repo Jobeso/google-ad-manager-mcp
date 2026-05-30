@@ -1,12 +1,16 @@
 """Reporting tools for Google Ad Manager."""
 
-import logging
-import time
+import base64
+import copy
+import csv
 import gzip
 import io
-from typing import Optional, List
+import logging
+import time
+from typing import Any, List, Optional
+
 from ..client import get_gam_client
-from ..utils import safe_get
+from ..utils import safe_get, zeep_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +103,7 @@ def run_delivery_report(
     order_id: Optional[int] = None,
     line_item_id: Optional[int] = None,
     include_date_breakdown: bool = True,
+    export_format: str = "CSV_DUMP",
     timeout_seconds: int = 120,
     network_code: Optional[str] = None
 ) -> dict:
@@ -120,6 +125,7 @@ def run_delivery_report(
         order_id: Optional order ID to filter by
         line_item_id: Optional line item ID to filter by
         include_date_breakdown: If True, includes daily breakdown (default: True)
+        export_format: Report export format, e.g. CSV_DUMP, TSV, XML, XLSX
         timeout_seconds: Maximum time to wait for report (default: 120)
         network_code: Optional GAM network code. Uses default if not provided.
 
@@ -160,6 +166,7 @@ def run_delivery_report(
         end_month=end_month,
         end_day=end_day,
         filter_statement=filter_statement,
+        export_format=export_format,
         timeout_seconds=timeout_seconds,
         network_code=network_code
     )
@@ -175,6 +182,7 @@ def run_inventory_report(
     end_day: Optional[int] = None,
     ad_unit_id: Optional[str] = None,
     include_date_breakdown: bool = True,
+    export_format: str = "CSV_DUMP",
     timeout_seconds: int = 120,
     network_code: Optional[str] = None
 ) -> dict:
@@ -193,6 +201,7 @@ def run_inventory_report(
         end_day: End date day 1-31 (for CUSTOM_DATE)
         ad_unit_id: Optional ad unit ID to filter by
         include_date_breakdown: If True, includes daily breakdown (default: True)
+        export_format: Report export format, e.g. CSV_DUMP, TSV, XML, XLSX
         timeout_seconds: Maximum time to wait for report (default: 120)
         network_code: Optional GAM network code. Uses default if not provided.
 
@@ -225,6 +234,7 @@ def run_inventory_report(
         end_month=end_month,
         end_day=end_day,
         filter_statement=filter_statement,
+        export_format=export_format,
         timeout_seconds=timeout_seconds,
         network_code=network_code
     )
@@ -241,6 +251,7 @@ def run_custom_report(
     end_month: Optional[int] = None,
     end_day: Optional[int] = None,
     filter_statement: Optional[str] = None,
+    export_format: str = "CSV_DUMP",
     timeout_seconds: int = 120,
     network_code: Optional[str] = None
 ) -> dict:
@@ -281,16 +292,414 @@ def run_custom_report(
         end_month: End month (1-12) for CUSTOM_DATE range
         end_day: End day (1-31) for CUSTOM_DATE range
         filter_statement: Optional filter (e.g., "ORDER_ID = 12345")
+        export_format: Report export format, e.g. CSV_DUMP, TSV, XML, XLSX
         timeout_seconds: Maximum seconds to wait for report completion
         network_code: Optional GAM network code. Uses default if not provided.
 
     Returns:
         dict with report data including column headers and data rows
     """
+    report_result = start_custom_report(
+        dimensions=dimensions,
+        columns=columns,
+        date_range_type=date_range_type,
+        start_year=start_year,
+        start_month=start_month,
+        start_day=start_day,
+        end_year=end_year,
+        end_month=end_month,
+        end_day=end_day,
+        filter_statement=filter_statement,
+        network_code=network_code,
+    )
+    if "error" in report_result:
+        return report_result
+
+    report_job_id = report_result["job_id"]
+    wait_result = wait_for_report_job(
+        report_job_id=report_job_id,
+        timeout_seconds=timeout_seconds,
+        network_code=network_code,
+    )
+    if "error" in wait_result:
+        return wait_result
+
+    download_result = download_report_data(
+        report_job_id=report_job_id,
+        export_format=export_format,
+        network_code=network_code,
+    )
+    if "error" in download_result:
+        return download_result
+
+    result = {
+        "success": True,
+        "job_id": report_job_id,
+        "date_range_type": date_range_type,
+        "dimensions": dimensions,
+        "columns": columns,
+        "export_format": export_format,
+    }
+    result.update(download_result)
+    if "row_count" in result:
+        result["message"] = f"Report completed with {result['row_count']} data rows"
+    else:
+        result["message"] = "Report completed"
+    return result
+
+
+def start_custom_report(
+    dimensions: List[str],
+    columns: List[str],
+    date_range_type: str = "LAST_WEEK",
+    start_year: Optional[int] = None,
+    start_month: Optional[int] = None,
+    start_day: Optional[int] = None,
+    end_year: Optional[int] = None,
+    end_month: Optional[int] = None,
+    end_day: Optional[int] = None,
+    filter_statement: Optional[str] = None,
+    network_code: Optional[str] = None,
+) -> dict:
+    """Start a custom report job and return immediately with the job ID."""
+    report_query_or_error = _build_report_query(
+        dimensions=dimensions,
+        columns=columns,
+        date_range_type=date_range_type,
+        start_year=start_year,
+        start_month=start_month,
+        start_day=start_day,
+        end_year=end_year,
+        end_month=end_month,
+        end_day=end_day,
+        filter_statement=filter_statement,
+    )
+    if "error" in report_query_or_error:
+        return report_query_or_error
+
     client = get_gam_client(network_code=network_code)
     report_service = client.get_service('ReportService')
 
-    # Validate date range
+    try:
+        report_job = report_service.runReportJob(
+            {'reportQuery': report_query_or_error}
+        )
+        report_job_id = safe_get(report_job, 'id')
+        logger.info(f"Report job started with ID: {report_job_id}")
+        return {
+            "success": True,
+            "job_id": report_job_id,
+            "status": "STARTED",
+            "date_range_type": date_range_type,
+            "dimensions": dimensions,
+            "columns": columns,
+        }
+    except Exception as e:
+        logger.error(f"Error starting report: {e}")
+        return {"error": f"Failed to start report: {str(e)}"}
+
+
+def run_saved_query_report(
+    saved_query_id: int,
+    export_format: str = "CSV_DUMP",
+    timeout_seconds: int = 120,
+    date_range_type: Optional[str] = None,
+    start_year: Optional[int] = None,
+    start_month: Optional[int] = None,
+    start_day: Optional[int] = None,
+    end_year: Optional[int] = None,
+    end_month: Optional[int] = None,
+    end_day: Optional[int] = None,
+    network_code: Optional[str] = None,
+) -> dict:
+    """Run a saved query report by saved query ID."""
+    saved_query_result = get_saved_query(saved_query_id, network_code=network_code)
+    if "error" in saved_query_result:
+        return saved_query_result
+
+    saved_query = saved_query_result["saved_query"]
+    if saved_query.get("is_compatible_with_api_version") is False:
+        return {
+            "error": f"Saved query {saved_query_id} is not compatible with this API version"
+        }
+
+    report_query = copy.deepcopy(saved_query.get("report_query"))
+    if not report_query:
+        return {"error": f"Saved query {saved_query_id} does not include a report query"}
+
+    if date_range_type:
+        report_query["dateRangeType"] = date_range_type
+        if date_range_type == "CUSTOM_DATE":
+            if not all([start_year, start_month, start_day, end_year, end_month, end_day]):
+                return {
+                    "error": "CUSTOM_DATE requires start_year, start_month, start_day, "
+                             "end_year, end_month, and end_day parameters"
+                }
+            report_query["startDate"] = {
+                "year": start_year,
+                "month": start_month,
+                "day": start_day,
+            }
+            report_query["endDate"] = {
+                "year": end_year,
+                "month": end_month,
+                "day": end_day,
+            }
+
+    client = get_gam_client(network_code=network_code)
+    report_service = client.get_service('ReportService')
+
+    try:
+        report_job = report_service.runReportJob({'reportQuery': report_query})
+        report_job_id = safe_get(report_job, 'id')
+    except Exception as e:
+        logger.error(f"Error starting saved query report: {e}")
+        return {"error": f"Failed to start saved query report: {str(e)}"}
+
+    wait_result = wait_for_report_job(
+        report_job_id=report_job_id,
+        timeout_seconds=timeout_seconds,
+        network_code=network_code,
+    )
+    if "error" in wait_result:
+        return wait_result
+
+    download_result = download_report_data(
+        report_job_id=report_job_id,
+        export_format=export_format,
+        network_code=network_code,
+    )
+    if "error" in download_result:
+        return download_result
+
+    result = {
+        "success": True,
+        "saved_query_id": saved_query_id,
+        "saved_query_name": saved_query.get("name"),
+        "job_id": report_job_id,
+        "export_format": export_format,
+    }
+    result.update(download_result)
+    return result
+
+
+def list_saved_queries(
+    limit: int = 50,
+    name_contains: Optional[str] = None,
+    include_incompatible: bool = False,
+    network_code: Optional[str] = None,
+) -> dict:
+    """List saved report queries available in GAM."""
+    client = get_gam_client(network_code=network_code)
+    saved_query_service = client.get_service('SavedQueryService')
+
+    conditions = []
+    if not include_incompatible:
+        conditions.append("isCompatibleWithApiVersion = true")
+    if name_contains:
+        conditions.append("name LIKE :name")
+
+    statement = client.create_statement()
+    if conditions:
+        statement = statement.Where(" AND ".join(conditions))
+    if name_contains:
+        statement = statement.WithBindVariable("name", f"%{name_contains}%")
+    statement = statement.Limit(limit)
+
+    try:
+        response = saved_query_service.getSavedQueriesByStatement(
+            statement.ToStatement()
+        )
+    except Exception as e:
+        logger.error(f"Error listing saved queries: {e}")
+        return {"error": f"Failed to list saved queries: {str(e)}"}
+
+    results = safe_get(response, 'results', []) or []
+    saved_queries = [_serialize_saved_query(saved_query) for saved_query in results]
+    return {
+        "saved_queries": saved_queries,
+        "total": len(saved_queries),
+        "limit": limit,
+    }
+
+
+def get_saved_query(
+    saved_query_id: int,
+    network_code: Optional[str] = None,
+) -> dict:
+    """Get a saved report query by ID."""
+    client = get_gam_client(network_code=network_code)
+    saved_query_service = client.get_service('SavedQueryService')
+
+    statement = client.create_statement()
+    statement = statement.Where("id = :id").WithBindVariable("id", saved_query_id)
+
+    try:
+        response = saved_query_service.getSavedQueriesByStatement(
+            statement.ToStatement()
+        )
+    except Exception as e:
+        logger.error(f"Error getting saved query: {e}")
+        return {"error": f"Failed to get saved query: {str(e)}"}
+
+    results = safe_get(response, 'results', []) or []
+    if not results:
+        return {"error": f"Saved query {saved_query_id} not found"}
+
+    return {"saved_query": _serialize_saved_query(results[0])}
+
+
+def get_report_job_status(
+    report_job_id: int,
+    network_code: Optional[str] = None,
+) -> dict:
+    """Get the status of a report job."""
+    client = get_gam_client(network_code=network_code)
+    report_service = client.get_service('ReportService')
+
+    try:
+        status = report_service.getReportJobStatus(report_job_id)
+        return {
+            "job_id": report_job_id,
+            "status": status,
+            "is_terminal": status in {"COMPLETED", "FAILED"},
+        }
+    except Exception as e:
+        logger.error(f"Error getting report job status: {e}")
+        return {"error": f"Failed to get report job status: {str(e)}"}
+
+
+def wait_for_report_job(
+    report_job_id: int,
+    timeout_seconds: int = 120,
+    poll_interval_seconds: int = 2,
+    network_code: Optional[str] = None,
+) -> dict:
+    """Wait for a report job to complete."""
+    start_time = time.time()
+    status = None
+
+    while time.time() - start_time < timeout_seconds:
+        status_result = get_report_job_status(
+            report_job_id=report_job_id,
+            network_code=network_code,
+        )
+        if "error" in status_result:
+            return status_result
+
+        status = status_result["status"]
+        if status == 'COMPLETED':
+            logger.info(f"Report job {report_job_id} completed")
+            return {
+                "success": True,
+                "job_id": report_job_id,
+                "status": status,
+            }
+        if status == 'FAILED':
+            return {
+                "error": "Report job failed",
+                "job_id": report_job_id,
+                "status": status,
+            }
+
+        time.sleep(poll_interval_seconds)
+
+    return {
+        "error": f"Report job timed out after {timeout_seconds} seconds",
+        "job_id": report_job_id,
+        "status": status,
+    }
+
+
+def get_report_download_url(
+    report_job_id: int,
+    export_format: str = "CSV_DUMP",
+    use_gzip_compression: bool = True,
+    network_code: Optional[str] = None,
+) -> dict:
+    """Get a download URL for a completed report job."""
+    client = get_gam_client(network_code=network_code)
+    downloader = client.get_data_downloader()
+
+    try:
+        if hasattr(downloader, "GetReportDownloadUrlWithOptions"):
+            url = downloader.GetReportDownloadUrlWithOptions(
+                report_job_id,
+                export_format,
+                {"useGzipCompression": use_gzip_compression},
+            )
+        else:
+            url = downloader.GetReportDownloadUrl(report_job_id, export_format)
+        return {
+            "job_id": report_job_id,
+            "export_format": export_format,
+            "use_gzip_compression": use_gzip_compression,
+            "download_url": url,
+        }
+    except Exception as e:
+        logger.error(f"Error getting report download URL: {e}")
+        return {"error": f"Failed to get report download URL: {str(e)}"}
+
+
+def download_report_data(
+    report_job_id: int,
+    export_format: str = "CSV_DUMP",
+    network_code: Optional[str] = None,
+) -> dict:
+    """Download report data for a completed report job."""
+    client = get_gam_client(network_code=network_code)
+    report_downloader = client.get_data_downloader()
+
+    try:
+        buffer = io.BytesIO()
+        report_downloader.DownloadReportToFile(report_job_id, export_format, buffer)
+        buffer.seek(0)
+        content = buffer.read()
+
+        try:
+            content = gzip.decompress(content)
+        except (gzip.BadGzipFile, OSError):
+            pass
+
+        text = content.decode('utf-8')
+    except UnicodeDecodeError:
+        return {
+            "bytes_count": len(content),
+            "content_base64": base64.b64encode(content).decode("utf-8"),
+            "encoding": "base64",
+        }
+    except Exception as e:
+        logger.error(f"Error downloading report: {e}")
+        return {"error": f"Failed to download report: {str(e)}"}
+
+    delimiter = "\t" if export_format.startswith("TSV") else ","
+    if export_format in {"CSV_DUMP", "TSV", "TSV_EXCEL"}:
+        rows = _parse_delimited_report(text, delimiter=delimiter)
+        return {
+            "row_count": len(rows) - 1 if rows else 0,
+            "headers": rows[0] if rows else [],
+            "data": rows[1:] if rows else [],
+        }
+
+    return {
+        "text": text,
+        "bytes_count": len(text.encode("utf-8")),
+    }
+
+
+def _build_report_query(
+    dimensions: List[str],
+    columns: List[str],
+    date_range_type: str,
+    start_year: Optional[int] = None,
+    start_month: Optional[int] = None,
+    start_day: Optional[int] = None,
+    end_year: Optional[int] = None,
+    end_month: Optional[int] = None,
+    end_day: Optional[int] = None,
+    filter_statement: Optional[str] = None,
+) -> dict:
+    """Build a GAM report query dict or return an error dict."""
     if date_range_type == "CUSTOM_DATE":
         if not all([start_year, start_month, start_day, end_year, end_month, end_day]):
             return {
@@ -298,14 +707,12 @@ def run_custom_report(
                          "end_year, end_month, and end_day parameters"
             }
 
-    # Build report query
     report_query = {
         'dimensions': dimensions,
         'columns': columns,
         'dateRangeType': date_range_type,
     }
 
-    # Add custom date range if specified
     if date_range_type == "CUSTOM_DATE":
         report_query['startDate'] = {
             'year': start_year,
@@ -324,108 +731,39 @@ def run_custom_report(
             'query': f"WHERE {filter_statement}"
         }
 
-    # Create report job
-    report_job = {'reportQuery': report_query}
-
-    try:
-        # Run the report
-        report_job = report_service.runReportJob(report_job)
-        report_job_id = report_job['id']
-        logger.info(f"Report job started with ID: {report_job_id}")
-
-        # Wait for report to complete
-        start_time = time.time()
-        status = None
-        while time.time() - start_time < timeout_seconds:
-            # getReportJobStatus returns a string directly (e.g., 'COMPLETED', 'IN_PROGRESS', 'FAILED')
-            status = report_service.getReportJobStatus(report_job_id)
-
-            if status == 'COMPLETED':
-                logger.info(f"Report job {report_job_id} completed")
-                break
-            elif status == 'FAILED':
-                return {
-                    "error": f"Report job failed",
-                    "job_id": report_job_id,
-                    "status": status
-                }
-
-            time.sleep(2)  # Poll every 2 seconds
-        else:
-            return {
-                "error": f"Report job timed out after {timeout_seconds} seconds",
-                "job_id": report_job_id,
-                "status": status
-            }
-
-        # Download the report
-        export_format = 'CSV_DUMP'
-        report_downloader = client.get_data_downloader()
-
-        # Download to a BytesIO buffer
-        buffer = io.BytesIO()
-        report_downloader.DownloadReportToFile(report_job_id, export_format, buffer)
-
-        # Read and decode the content
-        buffer.seek(0)
-        content = buffer.read()
-
-        # Decompress if gzipped
-        try:
-            report_data = gzip.decompress(content).decode('utf-8')
-        except (gzip.BadGzipFile, OSError):
-            report_data = content.decode('utf-8')
-
-        # Parse CSV data
-        rows = _parse_csv_report(report_data)
-
-        return {
-            "success": True,
-            "job_id": report_job_id,
-            "date_range_type": date_range_type,
-            "dimensions": dimensions,
-            "columns": columns,
-            "row_count": len(rows) - 1 if rows else 0,  # Exclude header row
-            "headers": rows[0] if rows else [],
-            "data": rows[1:] if rows else [],
-            "message": f"Report completed with {len(rows) - 1 if rows else 0} data rows"
-        }
-
-    except Exception as e:
-        logger.error(f"Error running report: {e}")
-        return {
-            "error": f"Failed to run report: {str(e)}"
-        }
+    return report_query
 
 
-def _parse_csv_report(report_data: str) -> List[List[str]]:
-    """Parse CSV report data into rows.
+def _parse_delimited_report(report_data: str, delimiter: str = ",") -> List[List[str]]:
+    """Parse delimited report data into rows.
 
     Args:
-        report_data: Raw CSV string from report download
+        report_data: Raw delimited string from report download
+        delimiter: Field delimiter
 
     Returns:
         List of rows, where each row is a list of column values
     """
-    rows = []
-    for line in report_data.strip().split('\n'):
-        if line:
-            # Handle CSV parsing (simple split, handles most cases)
-            # For complex CSV with quoted commas, a proper CSV parser would be needed
-            values = []
-            in_quotes = False
-            current_value = ""
-            for char in line:
-                if char == '"':
-                    in_quotes = not in_quotes
-                elif char == ',' and not in_quotes:
-                    values.append(current_value.strip())
-                    current_value = ""
-                else:
-                    current_value += char
-            values.append(current_value.strip())
-            rows.append(values)
-    return rows
+    reader = csv.reader(io.StringIO(report_data.strip()), delimiter=delimiter)
+    return [row for row in reader if row]
+
+
+def _serialize_saved_query(saved_query: Any) -> dict:
+    """Convert a saved query SOAP object into JSON-friendly fields."""
+    report_query = safe_get(saved_query, 'reportQuery')
+    return {
+        "id": safe_get(saved_query, 'id'),
+        "name": safe_get(saved_query, 'name'),
+        "is_compatible_with_api_version": safe_get(
+            saved_query, 'isCompatibleWithApiVersion'
+        ),
+        "report_query": zeep_to_dict(report_query),
+    }
+
+
+def _parse_csv_report(report_data: str) -> List[List[str]]:
+    """Backward-compatible CSV parser wrapper."""
+    return _parse_delimited_report(report_data, delimiter=",")
 
 
 def get_available_dimensions() -> dict:

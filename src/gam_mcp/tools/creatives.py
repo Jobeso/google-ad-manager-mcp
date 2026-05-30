@@ -4,9 +4,10 @@ import base64
 import logging
 import re
 from pathlib import Path
-from typing import Optional, List
+from typing import Any, List, Optional
+
 from ..client import get_gam_client
-from ..utils import safe_get
+from ..utils import safe_get, zeep_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,7 @@ def upload_creative_from_base64(
         "name": created['name'],
         "advertiser_id": advertiser_id,
         "size": f"{width}x{height}",
-        "message": f"Creative uploaded successfully"
+        "message": "Creative uploaded successfully"
     }
 
 
@@ -503,6 +504,284 @@ def update_creative(
         "type": safe_get(updated, 'Creative.Type'),
         "destination_url": safe_get(updated, 'destinationUrl'),
         "message": f"Creative {creative_id} updated successfully"
+    }
+
+
+def perform_creative_action(
+    action: str,
+    creative_id: Optional[int] = None,
+    statement_query: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> dict:
+    """Perform an action on creatives.
+
+    Args:
+        action: Creative action, currently ActivateCreatives or DeactivateCreatives
+        creative_id: Optional single creative ID
+        statement_query: Optional full PQL statement query
+        network_code: Optional GAM network code. Uses default if not provided.
+
+    Returns:
+        dict with update result
+    """
+    if action not in {"ActivateCreatives", "DeactivateCreatives"}:
+        return {"error": "action must be ActivateCreatives or DeactivateCreatives"}
+    if not creative_id and not statement_query:
+        return {"error": "creative_id or statement_query is required"}
+
+    client = get_gam_client(network_code=network_code)
+    creative_service = client.get_service('CreativeService')
+
+    if statement_query:
+        statement = {"query": statement_query}
+    else:
+        statement = client.create_statement().Where(
+            "id = :id"
+        ).WithBindVariable("id", creative_id).ToStatement()
+
+    result = creative_service.performCreativeAction(
+        {"xsi_type": action},
+        statement
+    )
+
+    return {
+        "action": action,
+        "creative_id": creative_id,
+        "num_changes": safe_get(result, 'numChanges', 0),
+        "message": f"{action} applied"
+    }
+
+
+def list_creative_templates(
+    limit: int = 50,
+    name_contains: Optional[str] = None,
+    status: Optional[str] = "ACTIVE",
+    template_type: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> dict:
+    """List creative templates."""
+    client = get_gam_client(network_code=network_code)
+    template_service = client.get_service('CreativeTemplateService')
+
+    conditions = []
+    if status:
+        conditions.append("status = :status")
+    if template_type:
+        conditions.append("type = :type")
+    if name_contains:
+        conditions.append("name LIKE :name")
+
+    statement = client.create_statement()
+    if conditions:
+        statement = statement.Where(" AND ".join(conditions))
+    if status:
+        statement = statement.WithBindVariable("status", status)
+    if template_type:
+        statement = statement.WithBindVariable("type", template_type)
+    if name_contains:
+        statement = statement.WithBindVariable("name", f"%{name_contains}%")
+    statement = statement.Limit(limit)
+
+    response = template_service.getCreativeTemplatesByStatement(
+        statement.ToStatement()
+    )
+    results = safe_get(response, 'results', []) or []
+
+    return {
+        "creative_templates": [
+            _serialize_creative_template(template) for template in results
+        ],
+        "total": len(results),
+        "limit": limit,
+    }
+
+
+def get_creative_template(
+    creative_template_id: int,
+    network_code: Optional[str] = None
+) -> dict:
+    """Get a creative template by ID."""
+    client = get_gam_client(network_code=network_code)
+    template_service = client.get_service('CreativeTemplateService')
+
+    statement = client.create_statement()
+    statement = statement.Where("id = :id").WithBindVariable(
+        "id", creative_template_id
+    )
+    response = template_service.getCreativeTemplatesByStatement(
+        statement.ToStatement()
+    )
+    results = safe_get(response, 'results', []) or []
+    if not results:
+        return {"error": f"Creative template {creative_template_id} not found"}
+
+    return {"creative_template": _serialize_creative_template(results[0])}
+
+
+def create_template_creative(
+    advertiser_id: int,
+    name: str,
+    creative_template_id: int,
+    width: int,
+    height: int,
+    variable_values: Any,
+    destination_url: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> dict:
+    """Create a TemplateCreative from a creative template.
+
+    variable_values may be either a mapping of uniqueName to value, or a list of
+    GAM-ready creative template variable value dictionaries.
+    """
+    client = get_gam_client(network_code=network_code)
+    creative_service = client.get_service('CreativeService')
+
+    creative = {
+        'xsi_type': 'TemplateCreative',
+        'name': name,
+        'advertiserId': advertiser_id,
+        'size': {
+            'width': width,
+            'height': height,
+            'isAspectRatio': False
+        },
+        'creativeTemplateId': creative_template_id,
+        'creativeTemplateVariableValues': _build_template_variable_values(
+            variable_values
+        ),
+    }
+    if destination_url is not None:
+        creative['destinationUrl'] = destination_url
+
+    created_creatives = creative_service.createCreatives([creative])
+    if not created_creatives:
+        return {"error": "Failed to create template creative"}
+
+    created = created_creatives[0]
+    size = safe_get(created, 'size')
+    return {
+        "id": safe_get(created, 'id'),
+        "name": safe_get(created, 'name'),
+        "advertiser_id": advertiser_id,
+        "creative_template_id": creative_template_id,
+        "size": f"{safe_get(size, 'width', width)}x{safe_get(size, 'height', height)}",
+        "type": "TemplateCreative",
+        "message": f"Template creative '{name}' created successfully"
+    }
+
+
+def list_creative_wrappers(
+    limit: int = 50,
+    label_id: Optional[int] = None,
+    status: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> dict:
+    """List creative wrappers."""
+    client = get_gam_client(network_code=network_code)
+    wrapper_service = client.get_service('CreativeWrapperService')
+
+    conditions = []
+    if label_id is not None:
+        conditions.append("labelId = :labelId")
+    if status:
+        conditions.append("status = :status")
+
+    statement = client.create_statement()
+    if conditions:
+        statement = statement.Where(" AND ".join(conditions))
+    if label_id is not None:
+        statement = statement.WithBindVariable("labelId", label_id)
+    if status:
+        statement = statement.WithBindVariable("status", status)
+    statement = statement.Limit(limit)
+
+    response = wrapper_service.getCreativeWrappersByStatement(
+        statement.ToStatement()
+    )
+    results = safe_get(response, 'results', []) or []
+    return {
+        "creative_wrappers": [
+            _serialize_creative_wrapper(wrapper) for wrapper in results
+        ],
+        "total": len(results),
+        "limit": limit,
+    }
+
+
+def create_html_creative_wrapper(
+    label_id: int,
+    html_header: Optional[str] = None,
+    html_footer: Optional[str] = None,
+    ordering: str = "NO_PREFERENCE",
+    amp_head: Optional[str] = None,
+    amp_body: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> dict:
+    """Create an HTML creative wrapper for a CREATIVE_WRAPPER label."""
+    if not html_header and not html_footer:
+        return {"error": "html_header or html_footer is required"}
+
+    client = get_gam_client(network_code=network_code)
+    wrapper_service = client.get_service('CreativeWrapperService')
+
+    wrapper = {
+        "labelId": label_id,
+        "creativeWrapperType": "HTML",
+        "ordering": ordering,
+    }
+    if html_header:
+        wrapper["htmlHeader"] = html_header
+    if html_footer:
+        wrapper["htmlFooter"] = html_footer
+    if amp_head:
+        wrapper["ampHead"] = amp_head
+    if amp_body:
+        wrapper["ampBody"] = amp_body
+
+    created_wrappers = wrapper_service.createCreativeWrappers([wrapper])
+    if not created_wrappers:
+        return {"error": "Failed to create creative wrapper"}
+
+    created = created_wrappers[0]
+    return {
+        "creative_wrapper": _serialize_creative_wrapper(created),
+        "message": f"Creative wrapper for label {label_id} created successfully"
+    }
+
+
+def perform_creative_wrapper_action(
+    action: str,
+    creative_wrapper_id: Optional[int] = None,
+    statement_query: Optional[str] = None,
+    network_code: Optional[str] = None
+) -> dict:
+    """Perform an action on creative wrappers."""
+    if action not in {"ActivateCreativeWrappers", "DeactivateCreativeWrappers"}:
+        return {
+            "error": "action must be ActivateCreativeWrappers or DeactivateCreativeWrappers"
+        }
+    if not creative_wrapper_id and not statement_query:
+        return {"error": "creative_wrapper_id or statement_query is required"}
+
+    client = get_gam_client(network_code=network_code)
+    wrapper_service = client.get_service('CreativeWrapperService')
+
+    if statement_query:
+        statement = {"query": statement_query}
+    else:
+        statement = client.create_statement().Where(
+            "id = :id"
+        ).WithBindVariable("id", creative_wrapper_id).ToStatement()
+
+    result = wrapper_service.performCreativeWrapperAction(
+        {"xsi_type": action},
+        statement
+    )
+    return {
+        "action": action,
+        "creative_wrapper_id": creative_wrapper_id,
+        "num_changes": safe_get(result, 'numChanges', 0),
+        "message": f"{action} applied"
     }
 
 
@@ -849,4 +1128,66 @@ def list_creatives_by_line_item(
         "line_item_id": line_item_id,
         "creatives": creatives,
         "total": len(creatives)
+    }
+
+
+def _build_template_variable_values(variable_values: Any) -> List[dict]:
+    """Build GAM TemplateCreative variable values from simple input."""
+    if isinstance(variable_values, list):
+        return variable_values
+
+    if not isinstance(variable_values, dict):
+        raise ValueError("variable_values must be a dict or list")
+
+    values = []
+    for unique_name, value in variable_values.items():
+        if isinstance(value, dict) and "xsi_type" in value:
+            variable_value = dict(value)
+            variable_value.setdefault("uniqueName", unique_name)
+            values.append(variable_value)
+            continue
+
+        if isinstance(value, int):
+            xsi_type = "LongCreativeTemplateVariableValue"
+            soap_value = value
+        elif isinstance(value, str) and value.startswith(("http://", "https://")):
+            xsi_type = "UrlCreativeTemplateVariableValue"
+            soap_value = value
+        else:
+            xsi_type = "StringCreativeTemplateVariableValue"
+            soap_value = str(value)
+
+        values.append({
+            "xsi_type": xsi_type,
+            "uniqueName": unique_name,
+            "value": soap_value,
+        })
+
+    return values
+
+
+def _serialize_creative_template(template: Any) -> dict:
+    """Serialize a creative template SOAP object."""
+    return {
+        "id": safe_get(template, 'id'),
+        "name": safe_get(template, 'name'),
+        "description": safe_get(template, 'description'),
+        "status": safe_get(template, 'status'),
+        "type": safe_get(template, 'type'),
+        "variables": zeep_to_dict(safe_get(template, 'variables', [])),
+    }
+
+
+def _serialize_creative_wrapper(wrapper: Any) -> dict:
+    """Serialize a creative wrapper SOAP object."""
+    return {
+        "id": safe_get(wrapper, 'id'),
+        "label_id": safe_get(wrapper, 'labelId'),
+        "creative_wrapper_type": safe_get(wrapper, 'creativeWrapperType'),
+        "status": safe_get(wrapper, 'status'),
+        "ordering": safe_get(wrapper, 'ordering'),
+        "html_header": safe_get(wrapper, 'htmlHeader'),
+        "html_footer": safe_get(wrapper, 'htmlFooter'),
+        "amp_head": safe_get(wrapper, 'ampHead'),
+        "amp_body": safe_get(wrapper, 'ampBody'),
     }

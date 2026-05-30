@@ -1,9 +1,8 @@
 """Tests for creative tools."""
 
 import base64
-import pytest
-from unittest.mock import patch, MagicMock, mock_open
 from pathlib import Path
+from unittest.mock import MagicMock, mock_open, patch
 
 from gam_mcp.tools import creatives
 
@@ -688,3 +687,178 @@ class TestListCreativesByAdvertiser:
         assert result["total"] == 2
         assert result["creatives"][0]["size"] == "300x250"
         assert result["creatives"][1]["size"] == "728x90"
+
+
+class TestCreativeActions:
+    """Tests for creative action tools."""
+
+    @patch("gam_mcp.tools.creatives.get_gam_client")
+    def test_perform_creative_action(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        statement = MagicMock()
+        statement.Where.return_value = statement
+        statement.WithBindVariable.return_value = statement
+        statement.ToStatement.return_value = {"query": "WHERE id = 123"}
+        mock_client.create_statement.return_value = statement
+
+        service = MagicMock()
+        service.performCreativeAction.return_value = {"numChanges": 1}
+        mock_client.get_service.return_value = service
+
+        result = creatives.perform_creative_action(
+            action="DeactivateCreatives",
+            creative_id=123,
+        )
+
+        assert result["num_changes"] == 1
+        service.performCreativeAction.assert_called_once()
+
+    def test_perform_creative_action_validates_action(self):
+        result = creatives.perform_creative_action(
+            action="DeleteCreatives",
+            creative_id=123,
+        )
+
+        assert "error" in result
+
+
+class TestCreativeTemplates:
+    """Tests for creative template tools."""
+
+    @patch("gam_mcp.tools.creatives.get_gam_client")
+    def test_list_creative_templates(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        statement = MagicMock()
+        statement.Where.return_value = statement
+        statement.WithBindVariable.return_value = statement
+        statement.Limit.return_value = statement
+        statement.ToStatement.return_value = {"query": "WHERE status = :status"}
+        mock_client.create_statement.return_value = statement
+
+        service = MagicMock()
+        service.getCreativeTemplatesByStatement.return_value = {
+            "results": [{
+                "id": 10,
+                "name": "Template",
+                "status": "ACTIVE",
+                "type": "SYSTEM_DEFINED",
+                "variables": [{"uniqueName": "clickUrl"}],
+            }]
+        }
+        mock_client.get_service.return_value = service
+
+        result = creatives.list_creative_templates()
+
+        assert result["total"] == 1
+        assert result["creative_templates"][0]["id"] == 10
+        assert result["creative_templates"][0]["variables"] == [{"uniqueName": "clickUrl"}]
+
+    @patch("gam_mcp.tools.creatives.get_gam_client")
+    def test_create_template_creative_builds_payload(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        service = MagicMock()
+        service.createCreatives.return_value = [{
+            "id": 22,
+            "name": "Custom",
+            "size": {"width": 300, "height": 250},
+        }]
+        mock_client.get_service.return_value = service
+
+        result = creatives.create_template_creative(
+            advertiser_id=1,
+            name="Custom",
+            creative_template_id=10,
+            width=300,
+            height=250,
+            variable_values={
+                "headline": "Hello",
+                "clickUrl": "https://example.com",
+                "duration": 15,
+            },
+        )
+
+        assert result["id"] == 22
+        payload = service.createCreatives.call_args[0][0][0]
+        assert payload["xsi_type"] == "TemplateCreative"
+        assert payload["creativeTemplateId"] == 10
+        assert payload["creativeTemplateVariableValues"] == [
+            {
+                "xsi_type": "StringCreativeTemplateVariableValue",
+                "uniqueName": "headline",
+                "value": "Hello",
+            },
+            {
+                "xsi_type": "UrlCreativeTemplateVariableValue",
+                "uniqueName": "clickUrl",
+                "value": "https://example.com",
+            },
+            {
+                "xsi_type": "LongCreativeTemplateVariableValue",
+                "uniqueName": "duration",
+                "value": 15,
+            },
+        ]
+
+
+class TestCreativeWrappers:
+    """Tests for creative wrapper tools."""
+
+    @patch("gam_mcp.tools.creatives.get_gam_client")
+    def test_create_html_creative_wrapper(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        service = MagicMock()
+        service.createCreativeWrappers.return_value = [{
+            "id": 99,
+            "labelId": 88,
+            "creativeWrapperType": "HTML",
+            "status": "ACTIVE",
+        }]
+        mock_client.get_service.return_value = service
+
+        result = creatives.create_html_creative_wrapper(
+            label_id=88,
+            html_header="<div>",
+            html_footer="</div>",
+        )
+
+        assert result["creative_wrapper"]["id"] == 99
+        payload = service.createCreativeWrappers.call_args[0][0][0]
+        assert payload["labelId"] == 88
+        assert payload["htmlHeader"] == "<div>"
+        assert payload["htmlFooter"] == "</div>"
+
+    def test_create_html_creative_wrapper_requires_markup(self):
+        result = creatives.create_html_creative_wrapper(label_id=88)
+
+        assert "error" in result
+
+    @patch("gam_mcp.tools.creatives.get_gam_client")
+    def test_perform_creative_wrapper_action(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        statement = MagicMock()
+        statement.Where.return_value = statement
+        statement.WithBindVariable.return_value = statement
+        statement.ToStatement.return_value = {"query": "WHERE id = 99"}
+        mock_client.create_statement.return_value = statement
+
+        service = MagicMock()
+        service.performCreativeWrapperAction.return_value = {"numChanges": 1}
+        mock_client.get_service.return_value = service
+
+        result = creatives.perform_creative_wrapper_action(
+            action="ActivateCreativeWrappers",
+            creative_wrapper_id=99,
+        )
+
+        assert result["num_changes"] == 1
+        service.performCreativeWrapperAction.assert_called_once()
